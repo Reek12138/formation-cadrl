@@ -78,90 +78,106 @@ class ReplayBuffer:
     def clear(self):
         self.buffer.clear()
 
-# class ReplayBuffer:
-#     def __init__(self, capacity, alpha=0.6):
-#         self.tree = SumTree(capacity)
-#         self.alpha = alpha  # 控制优先级的偏重程度
-#         self.epsilon = 1e-5  # 防止优先级为 0
-#         self.max_priority = 1.0  # 初始化的最大优先级
 
-#     def add(self, state, action, reward, next_state, done):
-#         experience = (state, action, reward, next_state, done)
-#         priority = self.max_priority  # 新经验使用当前最大优先级
-#         self.tree.add(priority, experience)
 
-#     def sample(self, batch_size, beta=0.4):
-#         batch = []
-#         idxs = []
-#         priorities = []
-#         segment = self.tree.total_priority() / batch_size
+# class PolicyNetwork(nn.Module):
+#     def __init__(self, state_dim, hidden_dim, action_dim):
+#         super(PolicyNetwork, self).__init__()
+#         self.fc1 = nn.Linear(state_dim, hidden_dim)
+#         self.fc_mu = nn.Linear(hidden_dim, action_dim)
+#         self.fc_std = nn.Linear(hidden_dim, action_dim)
 
-#         for i in range(batch_size):
-#             value = random.uniform(i * segment, (i + 1) * segment)
-#             idx, priority, data = self.tree.get_leaf(value)
-#             batch.append(data)
-#             idxs.append(idx)
-#             priorities.append(priority)
+#          # 使用 Xavier 初始化权重
+#         nn.init.xavier_uniform_(self.fc1.weight)
+#         nn.init.xavier_uniform_(self.fc_mu.weight)
+#         nn.init.xavier_uniform_(self.fc_std.weight)
 
-#         # 计算重要性采样权重
-#         sampling_probabilities = np.array(priorities) / self.tree.total_priority()
-#         is_weights = np.power(len(self.tree.data) * sampling_probabilities, -beta)
-#         is_weights /= is_weights.max()  # 归一化
+#     def forward(self, x):
+#         x = F.relu(self.fc1(x))
+#         mu = self.fc_mu(x)
+#         # std = F.softplus(self.fc_std(x)) + 1e-6
+#         std = F.softplus(self.fc_std(x))
+#         dist = Normal(mu, std)
+#         normal_sample = dist.rsample()
+#         log_prob = dist.log_prob(normal_sample)
+#         action = torch.tanh(normal_sample)
 
-#         states, actions, rewards, next_states, dones = zip(*batch)
-#         return (
-#             np.array(states),
-#             np.array(actions),
-#             np.array(rewards),
-#             np.array(next_states),
-#             np.array(dones),
-#             idxs,
-#             is_weights,
-#         )
+#         # log_prob = log_prob - torch.log(1-torch.tanh(action).pow(2) + 1e-7)
+#         log_prob = log_prob - torch.log(torch.clamp(1 - torch.tanh(action).pow(2), min=1e-6))
+#         log_prob = log_prob.sum(dim = -1, keepdim=True)
 
-#     def update_priorities(self, idxs, priorities):
-#         for idx, priority in zip(idxs, priorities):
-#             self.tree.update(idx, priority + self.epsilon)
-#         self.max_priority = max(self.max_priority, max(priorities))
+#         return action, log_prob
     
-#     def clear(self):
-#         self.tree = SumTree(self.tree.capacity)  # 重置 SumTree
-#         self.max_priority = 1.0 
+#     def save_checkpoint(self, checkpoint_file):
+#         torch.save(self.state_dict(), checkpoint_file)
+
+#     def load_checkpoint(self, checkpont_file):
+#         self.load_state_dict(torch.load(checkpont_file, weights_only=True))
 
 
-class PolicyNetwork(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim):
-        super(PolicyNetwork, self).__init__()
-        self.fc1 = nn.Linear(state_dim, hidden_dim)
-        self.fc_mu = nn.Linear(hidden_dim, action_dim)
-        self.fc_std = nn.Linear(hidden_dim, action_dim)
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Normal
 
-         # 使用 Xavier 初始化权重
-        nn.init.xavier_uniform_(self.fc1.weight)
-        nn.init.xavier_uniform_(self.fc_mu.weight)
-        nn.init.xavier_uniform_(self.fc_std.weight)
+
+class MoEPolicyNetwork(nn.Module):
+    def __init__(self, state_dim, hidden_dim, action_dim, num_experts=4):
+        super(MoEPolicyNetwork, self).__init__()
+        self.num_experts = num_experts
+
+        # 专家网络（每个专家一个全连接层）
+        self.experts = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(state_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, action_dim)
+            ) for _ in range(num_experts)
+        ])
+
+        # 门控网络（选择哪些专家）
+        self.gate = nn.Linear(state_dim, num_experts)
+
+        # 使用 Xavier 初始化权重
+        for expert in self.experts:
+            nn.init.xavier_uniform_(expert[0].weight)  # 初始化每个专家网络的第一层
+            nn.init.xavier_uniform_(expert[2].weight)  # 初始化每个专家网络的第二层
+
+        nn.init.xavier_uniform_(self.gate.weight)  # 初始化门控网络
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        mu = self.fc_mu(x)
-        # std = F.softplus(self.fc_std(x)) + 1e-6
-        std = F.softplus(self.fc_std(x))
+        # 门控网络，输出每个专家的权重
+        gate_output = self.gate(x)  # [batch_size, num_experts]
+        gate_output = F.softmax(gate_output, dim=-1)  # 转换为概率分布
+
+        # 获取每个专家的输出
+        expert_outputs = [expert(x) for expert in self.experts]  # 每个专家的输出
+
+        # 加权求和各个专家的输出
+        weighted_output = sum(gate_output[:, i].unsqueeze(1) * expert_outputs[i] for i in range(self.num_experts))
+
+        # 对于连续动作问题，使用标准差作为输出
+        mu = weighted_output
+        std = F.softplus(weighted_output)  # 可以选择其他方法来生成std
+
         dist = Normal(mu, std)
         normal_sample = dist.rsample()
         log_prob = dist.log_prob(normal_sample)
+
+        # 使用 tanh 函数将输出限制在 [-1, 1] 范围内
         action = torch.tanh(normal_sample)
 
-        # log_prob = log_prob - torch.log(1-torch.tanh(action).pow(2) + 1e-7)
         log_prob = log_prob - torch.log(torch.clamp(1 - torch.tanh(action).pow(2), min=1e-6))
-        log_prob = log_prob.sum(dim = -1, keepdim=True)
+        log_prob = log_prob.sum(dim=-1, keepdim=True)
 
         return action, log_prob
-    
+
     def save_checkpoint(self, checkpoint_file):
         torch.save(self.state_dict(), checkpoint_file)
 
-    def load_checkpoint(self, checkpont_file):
-        self.load_state_dict(torch.load(checkpont_file))
+    def load_checkpoint(self, checkpoint_file):
+        self.load_state_dict(torch.load(checkpoint_file, weights_only=True))
+
 
 
 
@@ -194,7 +210,7 @@ class QvalueNet(nn.Module):
         torch.save(self.state_dict(), checkpoint_file)
 
     def load_checkpoint(self, checkpoint_file):
-        self.load_state_dict(torch.load(checkpoint_file))
+        self.load_state_dict(torch.load(checkpoint_file, weights_only=True))
 
 
 
@@ -202,7 +218,7 @@ class QvalueNet(nn.Module):
 class SAC:
     def __init__(self, state_dim, hidden_dim, action_dim, actor_lr, critic_lr, alpha_lr, 
                  target_entropy, tau, gamma, device, agent_num):
-        self.actor = PolicyNetwork(state_dim, hidden_dim, action_dim).to(device)
+        self.actor = MoEPolicyNetwork(state_dim, hidden_dim, action_dim).to(device)
         self.critic_1 = QvalueNet(state_dim, hidden_dim, action_dim).to(device)    
         self.critic_2 = QvalueNet(state_dim, hidden_dim, action_dim).to(device)    
         self.target_critic_1 = QvalueNet(state_dim, hidden_dim, action_dim).to(device)    
@@ -412,13 +428,77 @@ class SAC:
         self.target_critic_2.save_checkpoint(os.path.join(base_path, f"uav_target_critic_2_{scenario}.pth"))
         torch.save(self.log_alpha, os.path.join(base_path, f"log_alpha_{scenario}.pth"))
 
-    def load_model(self, base_path, scenario):
-        # print("Loading model from:", os.path.join(base_path, f"uav_target_critic_1_{scenario}.pth"))
+    # def load_model(self, base_path, scenario):
+    #     # print("Loading model from:", os.path.join(base_path, f"uav_target_critic_1_{scenario}.pth"))
 
-        self.actor.load_checkpoint(os.path.join(base_path, f"uav_actor_{scenario}.pth"))
-        self.critic_1.load_checkpoint(os.path.join(base_path, f"uav_critic_1_{scenario}.pth"))
-        self.critic_2.load_checkpoint(os.path.join(base_path, f"uav_critic_2_{scenario}.pth"))
-        self.target_critic_1.load_checkpoint(os.path.join(base_path, f"uav_target_critic_1_{scenario}.pth"))
-        self.target_critic_2.load_checkpoint(os.path.join(base_path, f"uav_target_critic_2_{scenario}.pth"))
-        self.log_alpha = torch.load(os.path.join(base_path, f"log_alpha_{scenario}.pth")).to(self.device)
-        self.log_alpha.requires_grad = True  # 确保重新加载后继续优化
+    #     self.actor.load_checkpoint(os.path.join(base_path, f"uav_actor_{scenario}.pth"))
+    #     self.critic_1.load_checkpoint(os.path.join(base_path, f"uav_critic_1_{scenario}.pth"))
+    #     self.critic_2.load_checkpoint(os.path.join(base_path, f"uav_critic_2_{scenario}.pth"))
+    #     self.target_critic_1.load_checkpoint(os.path.join(base_path, f"uav_target_critic_1_{scenario}.pth"))
+    #     self.target_critic_2.load_checkpoint(os.path.join(base_path, f"uav_target_critic_2_{scenario}.pth"))
+    #     self.log_alpha = torch.load(os.path.join(base_path, f"log_alpha_{scenario}.pth"), weights_only=True).to(self.device)
+    #     self.log_alpha.requires_grad = True  # 确保重新加载后继续优化
+    def load_model(self, base_path, scenario):
+        # 检查是否存在模型路径
+        actor_path = os.path.join(base_path, f"uav_actor_{scenario}.pth")
+        critic_1_path = os.path.join(base_path, f"uav_critic_1_{scenario}.pth")
+        critic_2_path = os.path.join(base_path, f"uav_critic_2_{scenario}.pth")
+        target_critic_1_path = os.path.join(base_path, f"uav_target_critic_1_{scenario}.pth")
+        target_critic_2_path = os.path.join(base_path, f"uav_target_critic_2_{scenario}.pth")
+        log_alpha_path = os.path.join(base_path, f"log_alpha_{scenario}.pth")
+
+        # Actor
+        if os.path.exists(actor_path):
+            self.actor.load_checkpoint(actor_path)
+            print(f"Loaded actor from {actor_path}")
+        else:
+            self.actor.apply(self.kaiming_init)  # Kaiming初始化
+            print(f"Randomly initialized actor")
+
+        # Critic 1
+        if os.path.exists(critic_1_path):
+            self.critic_1.load_checkpoint(critic_1_path)
+            print(f"Loaded critic_1 from {critic_1_path}")
+        else:
+            self.critic_1.apply(self.kaiming_init)  # Kaiming初始化
+            print(f"Randomly initialized critic_1")
+
+        # Critic 2
+        if os.path.exists(critic_2_path):
+            self.critic_2.load_checkpoint(critic_2_path)
+            print(f"Loaded critic_2 from {critic_2_path}")
+        else:
+            self.critic_2.apply(self.kaiming_init)  # Kaiming初始化
+            print(f"Randomly initialized critic_2")
+
+        # Target Critic 1
+        if os.path.exists(target_critic_1_path):
+            self.target_critic_1.load_checkpoint(target_critic_1_path)
+            print(f"Loaded target_critic_1 from {target_critic_1_path}")
+        else:
+            self.target_critic_1.apply(self.kaiming_init)  # Kaiming初始化
+            print(f"Randomly initialized target_critic_1")
+
+        # Target Critic 2
+        if os.path.exists(target_critic_2_path):
+            self.target_critic_2.load_checkpoint(target_critic_2_path)
+            print(f"Loaded target_critic_2 from {target_critic_2_path}")
+        else:
+            self.target_critic_2.apply(self.kaiming_init)  # Kaiming初始化
+            print(f"Randomly initialized target_critic_2")
+
+        # Log alpha
+        if os.path.exists(log_alpha_path):
+            self.log_alpha = torch.load(log_alpha_path, weights_only=True).to(self.device)
+            self.log_alpha.requires_grad = True
+            print(f"Loaded log_alpha from {log_alpha_path}")
+        else:
+            # Kaiming初始化 log_alpha 这里可以初始化为适当的值
+            self.log_alpha = torch.randn(1, requires_grad=True).to(self.device)  # 或其他初始化方式
+            print(f"Randomly initialized log_alpha")
+
+    def kaiming_init(self, m):
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)

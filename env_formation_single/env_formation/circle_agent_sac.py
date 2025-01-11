@@ -40,52 +40,7 @@ class ReplayBuffer:
         """清空经验池"""
         self.buffer.clear()
  
-# # ----------------------------------------- #
-# # 策略网络
-# # ----------------------------------------- #
- 
-# class PolicyNet(nn.Module):
-#     def __init__(self, n_states, n_hiddens, n_actions):
-#         super(PolicyNet, self).__init__()
-#         self.fc1 = nn.Linear(n_states, n_hiddens)
-#         self.fc2 = nn.Linear(n_hiddens, n_actions)
-#     # 前向传播
-#     def forward(self, x):  # 获取当前状态下的动作选择概率
-#         x = self.fc1(x)  # [b,n_states]-->[b,n_hiddens]
-#         x = F.relu(x)
-#         x = self.fc2(x)  # [b,n_hiddens]-->[b,n_actions]
-#         # 每个状态下对应的每个动作的动作概率
-#         x = F.softmax(x, dim=1)  # [b,n_actions]
-#         return x
-    
-#     def save_checkpoint(self, checkpoint_file):
-#         torch.save(self.state_dict(), checkpoint_file)
 
-#     def load_checkpoint(self, checkpoint_file):
-#         self.load_state_dict(torch.load(checkpoint_file))
- 
-# # ----------------------------------------- #
-# # 价值网络
-# # ----------------------------------------- #
- 
-# class ValueNet(nn.Module):
-#     def __init__(self, n_states, n_hiddens, n_actions):
-#         super(ValueNet, self).__init__()
-#         self.fc1 = nn.Linear(n_states, n_hiddens)
-#         self.fc2 = nn.Linear(n_hiddens, n_actions)
-#     # 当前时刻的state_value
-#     def forward(self, x):  
-#         x = self.fc1(x)  # [b,n_states]-->[b,n_hiddens]
-#         x = F.relu(x)  
-#         x = self.fc2(x)  # [b,n_hiddens]-->[b,n_actions]
-#         return x
-    
-#     def save_checkpoint(self, checkpoint_file):
-#         torch.save(self.state_dict(), checkpoint_file)
-
-#     def load_checkpoint(self, checkpoint_file):
-#         self.load_state_dict(torch.load(checkpoint_file))
- 
 
 class PolicyNetContinuous(nn.Module):
     def __init__(self,state_dim,hidden_dim,action_dim):
@@ -132,7 +87,7 @@ class PolicyNetContinuous(nn.Module):
         torch.save(self.state_dict(), checkpoint_file)
 
     def load_checkpoint(self, checkpoint_file):
-        self.load_state_dict(torch.load(checkpoint_file))
+        self.load_state_dict(torch.load(checkpoint_file, weights_only=True))
  
  
 class QValueNetContinuous(nn.Module):
@@ -164,7 +119,7 @@ class QValueNetContinuous(nn.Module):
         torch.save(self.state_dict(), checkpoint_file)
 
     def load_checkpoint(self, checkpoint_file):
-        self.load_state_dict(torch.load(checkpoint_file))
+        self.load_state_dict(torch.load(checkpoint_file, weights_only=True))
 # ----------------------------------------- #
 # 模型构建
 # ----------------------------------------- #
