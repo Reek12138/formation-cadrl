@@ -58,7 +58,7 @@ last_episode_follower_reward = -inf
 env.leader_agent.replay_buffer.clear()
 env.SAC.replay_buffer.clear()
 env.leader_agent.sac_network.load_model(better_path, scenario)
-env.SAC.load_model(follower_better_path, scenario)
+env.SAC.load_model_1(follower_better_path, scenario)
 
 for episode_i in range(NUM_EPISODE):
     if BREAK_FLAG == True:
@@ -282,7 +282,8 @@ for episode_i in range(NUM_EPISODE):
             
 
 #====== 每个episode结束后更新一次=====================================================================
-    if env.leader_agent.replay_buffer.size() >= BATCH_SIZE*50:
+    # print(env.leader_agent.replay_buffer.size())
+    if env.leader_agent.replay_buffer.size() >= BATCH_SIZE*10:
         s, a, r, ns, d = env.leader_agent.replay_buffer.sample(batch_size=BATCH_SIZE)
         transition_dict = {'states': s,
                         'actions': a,
@@ -306,6 +307,7 @@ for episode_i in range(NUM_EPISODE):
         if not os.path.exists(follower_path):
             os.makedirs(follower_path)
         env.SAC.save_model(follower_path, scenario)
+        # print("Saving")
 
 
 
