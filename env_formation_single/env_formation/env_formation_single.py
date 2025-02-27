@@ -753,7 +753,7 @@ class CustomEnv:
         if vo_flag:
             return round((action[0] + 1) *5 - abs(action[1]) *5  - abs(action[1] - last_action[1]) *15, 5)
         else:
-            return round(((action[0] + 1) ) *5 - abs(action[1]) *5 - abs(action[1] - last_action[1])*15, 5)
+            return round(((action[0] + 1) ) *5 - abs(action[1]) *15 - abs(action[1] - last_action[1])*15, 15)
         
     def _caculate_side_reward(self):
         reward = 0
@@ -962,9 +962,10 @@ class CustomEnv:
 
     def _follower_vel_reward(self, uav_id, action):
         reward = 0
-        reward += -abs(action[0] - self.last_follower_action[uav_id][0]) - abs(action[1] - self.last_follower_action[uav_id][1])
+        # reward += -abs(action[0] - self.last_follower_action[uav_id][0]) - abs(action[1] - self.last_follower_action[uav_id][1])
+        reward += -abs(action[0]) - abs(action[1])
 
-        return round(reward *5, 5)
+        return round(reward , 5)
         
 
     def _check_obs_collision(self,current_agent,new_pos):
