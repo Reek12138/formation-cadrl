@@ -42,7 +42,8 @@ class CustomEnv:
         # 生成circle_agent实例列表
         self.leader_agent = circle_agent(self, pos=[25, 25], vel=[0,0], orientation=0, memo_size=memo_size,
                                         #  state_dim=13 + self.num_obstacles * 5,
-                                         state_dim=13 + 6 * 5,
+                                        #  state_dim=13 + 6 * 5,
+                                         state_dim=11 + 6 * 5,
                                          action_dim=2,
                                          alpha=1e-4,
                                          beta=1e-4,
@@ -301,7 +302,10 @@ class CustomEnv:
         obs_distance_angle = []
         obs_pos_vel = []
         obs_num = 0
-        for obs_id, obs in self.obstacles.items():
+        sorted_obs = sorted(self.obstacles.items(), key=lambda obs: np.linalg.norm(np.array([obs[1].pos_x, obs[1].pos_y]) - np.array(self.leader_agent.pos)))
+
+        # for obs_id, obs in self.obstacles.items():
+        for obs_id, obs in sorted_obs[:6]:
             obs_pos = [obs.pos_x, obs.pos_y]
             _obs_distance, _obs_angle = CustomEnv.calculate_relative_distance_and_angle(self.leader_agent.pos, obs_pos)
 
@@ -344,8 +348,8 @@ class CustomEnv:
             side_pos + 
             target_pos_ +
             obs_pos_vel +
-            self_pos_ +
-            last_action
+            self_pos_ 
+            # +last_action
         )
 
         # 跟随者的观测更新
@@ -360,30 +364,11 @@ class CustomEnv:
                 round(self.follower_uavs[f"follower_{i}"].pos[1] / self.height, 5),
                 round((self.height - self.follower_uavs[f"follower_{i}"].pos[1]) / self.height, 5),
             ]
-            # target_pos_2 = [(self.leader_agent.pos[0] + self.formation_pos[i][0] - self.follower_uavs[f"follower_{i}"].pos[0]) / self.width, (self.leader_agent.pos[1] + self.formation_pos[i][1] - self.follower_uavs[f"follower_{i}"].pos[1]) / self.height, _dis_ / (self.width * 1.414), _angle_ ]
-            # if np.linalg.norm(np.array(self.leader_agent.pos) + np.array(self.formation_pos[i]) - self.follower_uavs[f"follower_{i}"].pos) <= self.obs_delta * 3:
-            # target_pos_2 = [
-            #     round((self.leader_agent.pos[0] + self.formation_pos[i][0] - self.follower_uavs[f"follower_{i}"].pos[0]) / np.linalg.norm(np.array(self.formation_pos[0])), 5),
-            #     round((self.leader_agent.pos[1] + self.formation_pos[i][1] - self.follower_uavs[f"follower_{i}"].pos[1]) / np.linalg.norm(np.array(self.formation_pos[0])), 5),
-            # ]
+            
             target_pos_2 = [
                 round((self.leader_agent.pos[0] + self.formation_pos[i][0] - self.follower_uavs[f"follower_{i}"].pos[0]) , 5),
                 round((self.leader_agent.pos[1] + self.formation_pos[i][1] - self.follower_uavs[f"follower_{i}"].pos[1]) , 5),
             ]
-            # else:
-            #     x = 0
-            #     y = 0
-            #     if np.linalg.norm(np.array(self.leader_agent.pos[0]) + np.array(self.formation_pos[i][0]) - self.follower_uavs[f"follower_{i}"].pos[0]) > 0 :
-            #         x = 1
-            #     else:
-            #         x = -1
-                
-            #     if np.linalg.norm(np.array(self.leader_agent.pos[1]) + np.array(self.formation_pos[i][1]) - self.follower_uavs[f"follower_{i}"].pos[1]) > 0 :
-            #         y = 1
-            #     else:
-            #         y = -1
-            #     target_pos_2 = [x, y]
-
 
             # 障碍物的状态观测
             obs_pos_vel_2 = []
@@ -440,20 +425,7 @@ class CustomEnv:
                 round(self.leader_agent.vel * cos(self.leader_agent.orientation) * 0.5, 5),
                 round(self.leader_agent.vel * sin(self.leader_agent.orientation) * 0.5, 5),
             ]
-            # if np.linalg.norm(np.array(self.follower_uavs[f"follower_{i}"].pos) - np.array(self.leader_agent.pos)) < np.linalg.norm(np.array(self.formation_pos[0])):
-            # leader_pos  = [(self.follower_uavs[f"follower_{i}"].pos[0]- self.leader_agent.pos[0]) / (np.linalg.norm(np.array(self.formation_pos[0]))*2) , \
-            #                    (self.follower_uavs[f"follower_{i}"].pos[1]- self.leader_agent.pos[1]) / (np.linalg.norm(np.array(self.formation_pos[0]))*2)]
-            # else :
-            #     if (self.follower_uavs[f"follower_{i}"].pos[0]- self.leader_agent.pos[0]) < 0:
-            #         x= -1
-            #     else:
-            #         x = 1
-            #     if (self.follower_uavs[f"follower_{i}"].pos[1]- self.leader_agent.pos[1]) < 0:
-            #         y = -1
-            #     else:
-            #         y = 1
-                
-            #     leader_pos = [x, y]
+            
 
 
 
@@ -498,10 +470,10 @@ class CustomEnv:
 
 
             self.follower_uavs[f"follower_{i}"].observation = np.array([
+                self_pos_2+
                 side_pos_2 + 
                 target_pos_2 +
                 obs_pos_vel_2 +
-                self_pos_2+
                 follower_pos_ + 
                 leader_vel 
                 # +leader_pos

@@ -58,13 +58,13 @@ last_episode_follower_reward = -inf
 env.leader_agent.replay_buffer.clear()
 env.SAC.replay_buffer.clear()
 env.leader_agent.sac_network.load_model(better_path, scenario)
-env.SAC.load_model(follower_better_path, scenario)
+# env.SAC.load_model(follower_better_path, scenario)
 
 for episode_i in range(NUM_EPISODE):
     if BREAK_FLAG == True:
         break
-    if episode_i <= 3000:
-        env.leader_agent.sac_network.load_model(better_path, scenario2)
+    # if episode_i <= 3000:
+    #     env.leader_agent.sac_network.load_model(better_path, scenario)
 
     leader_state, done = env.reset()
     # print(done)
