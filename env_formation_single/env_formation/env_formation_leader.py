@@ -37,7 +37,7 @@ class CustomEnv:
         # 生成circle_agent实例列表
         self.leader_agent = circle_agent(self, pos=[25, 25], vel=[0,0], orientation=0, memo_size=memo_size,
                                         #  state_dim=13 + self.num_obstacles * 5,
-                                         state_dim=11 + 6 * 5,
+                                         state_dim=11 + 6 * 7,
                                          action_dim=2,
                                          alpha=1e-4,
                                          beta=1e-4,
@@ -262,7 +262,7 @@ class CustomEnv:
                 py = (obs.pos_y - self.leader_agent.pos[1])/ self.obs_delta
                 vx = 0
                 vy = 0
-                _obs_distance_ = _obs_distance / (self.obs_delta * 1.415)
+                _obs_distance_ = (_obs_distance - self.agent_radius - self.obs_radius) / (self.obs_delta * 1.415)
             
             # else:
             #     vo_flag = False
@@ -270,11 +270,11 @@ class CustomEnv:
             #     py = 0
             #     _obs_distance_ = 0
             
-                obs_dis_angle = (_obs_angle - self.leader_agent.orientation)
-                obs_pos_vel.extend([px, py, _obs_distance_, obs_dis_angle / (2*np.pi), vo_flag])
+                obs_dis_angle = (_obs_angle - self.leader_agent.orientation) / (2*np.pi)
+                obs_pos_vel.extend([px, py, vx, vy, _obs_distance_, obs_dis_angle, vo_flag])
                 # obs_pos_vel.extend([px, py, vo_flag])
         for _ in range (6 - obs_num):
-            obs_pos_vel.extend([0, 0, 0, 0, False])
+            obs_pos_vel.extend([0, 0, 0, 0, 0, 0, False])
         
         leader_observation = np.array(
             side_pos + 

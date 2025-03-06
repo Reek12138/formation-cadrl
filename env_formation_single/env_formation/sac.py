@@ -114,7 +114,7 @@ class PolicyNetwork(nn.Module):
         nn.init.xavier_uniform_(self.fc_std.weight)
 
     def forward(self, x):
-        state_self, state_obs_neighbor = torch.split(x, [10, 30], dim=1)
+        state_self, state_obs_neighbor = torch.split(x, [10, 42], dim=1)
         state_obs_neighbor = self.mlp(state_obs_neighbor)
         state_obs_neighbor = state_obs_neighbor.unsqueeze(1)
         q, attn = self.attention(state_obs_neighbor, state_obs_neighbor, state_obs_neighbor)
@@ -178,7 +178,7 @@ class QvalueNet(nn.Module):
         nn.init.kaiming_uniform_(self.fc_out.weight)  # 输出层通常不需要特定激活函数的考虑
     
     def forward(self, mx, ma):
-        state_self, state_obs_neighbor = torch.split(mx, [10, 30], dim=1)
+        state_self, state_obs_neighbor = torch.split(mx, [10, 42], dim=1)
         state_obs_neighbor = self.mlp(state_obs_neighbor)
         state_obs_neighbor = state_obs_neighbor.unsqueeze(1)
         q, attn = self.attention(state_obs_neighbor, state_obs_neighbor, state_obs_neighbor)
