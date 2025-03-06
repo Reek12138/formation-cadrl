@@ -26,9 +26,9 @@ follower_better_path = current_path + "/follower_model/better/"
 for episode_i in range(RENDER_EPISODE_NUM):
     env = CustomEnv(delta=0.1)
     # env.leader_agent.sac_network.load_model(better_path, scenario)
-    env.leader_agent.sac_network.load_model(agent_path, scenario)
+    env.leader_agent.sac_network.load_model(better_path, scenario)
     # env.SAC.load_model(follower_better_path, scenario)
-    env.SAC.load_model(follower_path, scenario)
+    env.SAC.load_model(follower_better_path, scenario)
 
     leader_state, leader_done = env.reset()
     target_distance = np.linalg.norm(np.array(env.leader_agent.pos) - np.array(env.leader_target_pos))
