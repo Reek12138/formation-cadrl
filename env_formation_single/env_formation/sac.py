@@ -8,6 +8,14 @@ import os
 from torch.distributions import Normal
 import collections
 from torch.utils.tensorboard import SummaryWriter
+import sys
+import os
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# parent_dir = os.path.dirname(current_dir)  
+sys.path.append(current_dir)  
+
+from attention_layer import MultiHeadAttention
 
 
 class SumTree:
@@ -78,63 +86,27 @@ class ReplayBuffer:
     def clear(self):
         self.buffer.clear()
 
-# class ReplayBuffer:
-#     def __init__(self, capacity, alpha=0.6):
-#         self.tree = SumTree(capacity)
-#         self.alpha = alpha  # 控制优先级的偏重程度
-#         self.epsilon = 1e-5  # 防止优先级为 0
-#         self.max_priority = 1.0  # 初始化的最大优先级
-
-#     def add(self, state, action, reward, next_state, done):
-#         experience = (state, action, reward, next_state, done)
-#         priority = self.max_priority  # 新经验使用当前最大优先级
-#         self.tree.add(priority, experience)
-
-#     def sample(self, batch_size, beta=0.4):
-#         batch = []
-#         idxs = []
-#         priorities = []
-#         segment = self.tree.total_priority() / batch_size
-
-#         for i in range(batch_size):
-#             value = random.uniform(i * segment, (i + 1) * segment)
-#             idx, priority, data = self.tree.get_leaf(value)
-#             batch.append(data)
-#             idxs.append(idx)
-#             priorities.append(priority)
-
-#         # 计算重要性采样权重
-#         sampling_probabilities = np.array(priorities) / self.tree.total_priority()
-#         is_weights = np.power(len(self.tree.data) * sampling_probabilities, -beta)
-#         is_weights /= is_weights.max()  # 归一化
-
-#         states, actions, rewards, next_states, dones = zip(*batch)
-#         return (
-#             np.array(states),
-#             np.array(actions),
-#             np.array(rewards),
-#             np.array(next_states),
-#             np.array(dones),
-#             idxs,
-#             is_weights,
-#         )
-
-#     def update_priorities(self, idxs, priorities):
-#         for idx, priority in zip(idxs, priorities):
-#             self.tree.update(idx, priority + self.epsilon)
-#         self.max_priority = max(self.max_priority, max(priorities))
-    
-#     def clear(self):
-#         self.tree = SumTree(self.tree.capacity)  # 重置 SumTree
-#         self.max_priority = 1.0 
 
 
 class PolicyNetwork(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim):
+    def __init__(self, state_dim, hidden_dim, action_dim, n_head=5, d_dim=50, self_dim=25):
         super(PolicyNetwork, self).__init__()
-        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc1 = nn.Linear(self_dim+d_dim, hidden_dim)
         self.fc_mu = nn.Linear(hidden_dim, action_dim)
         self.fc_std = nn.Linear(hidden_dim, action_dim)
+        self.attention = MultiHeadAttention(n_head, d_dim, d_dim // n_head, d_dim // n_head)
+        self.mlp = nn.Sequential(
+            nn.Linear(6 * 5, 100),  
+            nn.ReLU(),  
+            nn.Linear(100, d_dim),  
+            nn.ReLU()
+        )
+        self.state_self_encoder = nn.Sequential(
+            nn.Linear(10, 100),  
+            nn.ReLU(),  
+            nn.Linear(100, self_dim),  
+            nn.ReLU()
+        )
 
          # 使用 Xavier 初始化权重
         nn.init.xavier_uniform_(self.fc1.weight)
@@ -142,7 +114,15 @@ class PolicyNetwork(nn.Module):
         nn.init.xavier_uniform_(self.fc_std.weight)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
+        state_self, state_obs_neighbor = torch.split(x, [10, 30], dim=1)
+        state_obs_neighbor = self.mlp(state_obs_neighbor)
+        state_obs_neighbor = state_obs_neighbor.unsqueeze(1)
+        q, attn = self.attention(state_obs_neighbor, state_obs_neighbor, state_obs_neighbor)
+        q_ = q.squeeze(1)
+        state_self_embed = self.state_self_encoder(state_self)
+        state_combined = torch.cat([state_self_embed , q_], dim=1)
+
+        x = F.relu(self.fc1(state_combined))
         mu = self.fc_mu(x)
         # std = F.softplus(self.fc_std(x)) + 1e-6
         std = F.softplus(self.fc_std(x))
@@ -166,11 +146,31 @@ class PolicyNetwork(nn.Module):
 
 
 class QvalueNet(nn.Module):
-    def __init__(self, multi_state_dim, multi_hidden_dim, multi_action_dim):
+    def __init__(self, multi_state_dim, multi_hidden_dim, multi_action_dim, n_head=5, d_dim=50, self_dim=25):
         super(QvalueNet, self).__init__()
-        self.fc1 = nn.Linear(multi_state_dim + multi_action_dim, multi_hidden_dim)
+        self.fc1 = nn.Linear(self_dim + multi_action_dim, multi_hidden_dim)
         self.fc2 = nn.Linear(multi_hidden_dim, multi_hidden_dim)
         self.fc_out = nn.Linear(multi_hidden_dim, 1)
+        self.attention = MultiHeadAttention(n_head, d_dim, d_dim // n_head, d_dim // n_head)
+        self.mlp = nn.Sequential(
+            nn.Linear(6 * 5, 100),  
+            nn.ReLU(),  
+            nn.Linear(100, d_dim),  
+            nn.ReLU()
+        )
+        self.state_self_encoder = nn.Sequential(
+            nn.Linear(10, 100),  
+            nn.ReLU(),  
+            nn.Linear(100, self_dim),  
+            nn.ReLU()
+        )
+        self.ma_encoder = nn.Sequential(
+            nn.Linear(multi_action_dim, 100),  
+            nn.ReLU(),  
+            nn.Linear(100, multi_action_dim),  
+            nn.ReLU()
+        )
+
 
         # 使用 He 初始化权重
         nn.init.kaiming_uniform_(self.fc1.weight, nonlinearity='relu')
@@ -178,7 +178,15 @@ class QvalueNet(nn.Module):
         nn.init.kaiming_uniform_(self.fc_out.weight)  # 输出层通常不需要特定激活函数的考虑
     
     def forward(self, mx, ma):
-        mx = mx.view(mx.size(0), -1)  # 展平为 [batch_size, state_dim * agent_num]
+        state_self, state_obs_neighbor = torch.split(mx, [10, 30], dim=1)
+        state_obs_neighbor = self.mlp(state_obs_neighbor)
+        state_obs_neighbor = state_obs_neighbor.unsqueeze(1)
+        q, attn = self.attention(state_obs_neighbor, state_obs_neighbor, state_obs_neighbor)
+        q_ = q.squeeze(1)
+        state_self_embed = self.state_self_encoder(state_self)
+        state_combined = torch.cat([state_self_embed , q_], dim=1)
+
+        mx = state_combined.view(state_combined.size(0), -1)  # 展平为 [batch_size, state_dim * agent_num]
         ma = ma.view(ma.size(0), -1)  # 展平为 [batch_size, action_dim * agent_num]
         # print("Shape of mx:", mx.shape)
         # print("Shape of ma:", ma.shape)
@@ -270,56 +278,7 @@ class SAC:
         for param_target, param in zip(target_net.parameters(), net.parameters()):
             param_target.data.copy_(param_target.data * (1.0 - self.tau) + param.data * self.tau)
 
-    # def update(self,transition_dict):
-    #     states = torch.tensor(transition_dict['states'], dtype=torch.float).to(self.device)
-    #     # actions = torch.tensor(transition_dict['actions'], dtype=torch.float).view(-1, 1).to(self.device)
-    #     actions = torch.tensor(transition_dict['actions'], dtype=torch.float).to(self.device)
-    #     rewards = torch.tensor(transition_dict['rewards'], dtype=torch.float).view(-1, 1).to(self.device)
-    #     next_states = torch.tensor(transition_dict['next_states'], dtype=torch.float).to(self.device)
-    #     dones = torch.tensor(transition_dict['dones'], dtype=torch.float).view(-1, 1).to(self.device)
-        
-    #     # 确保拼接之前的维度匹配
-    #     # print(f"states shape: {states.shape}, actions shape: {actions.shape}")
     
-    #     #更新两个Q网络
-    #     td_target=self.calc_target(rewards,next_states,dones)
-    #     #Q网络输出值和目标值的均方差
-    #     critic_1_loss=torch.mean(F.mse_loss(self.critic_1(states,actions),td_target.detach()))
-    #     critic_2_loss=torch.mean(F.mse_loss(self.critic_2(states,actions),td_target.detach()))
-    #     self.critic_1_optimizer.zero_grad()
-    #     critic_1_loss.backward()
-    #     self.critic_1_optimizer.step()
-    #     self.critic_2_optimizer.zero_grad()
-    #     critic_2_loss.backward()
-    #     self.critic_2_optimizer.step()
-        
-    #     #更新策略网络
-    #     new_actions, log_prob=self.actor(states)
-    #     entropy= -log_prob
-    #     q1_value=self.critic_1(states,new_actions)
-    #     q2_value=self.critic_2(states,new_actions)
-    #     #最大化价值，所以误差为价值函数加负号
-    #     actor_loss=torch.mean(-self.log_alpha.exp() * entropy - torch.min(q1_value,q2_value))
-    #     self.actor_optimizer.zero_grad()
-    #     actor_loss.backward()
-    #     self.actor_optimizer.step()
-        
-    #     #更新alpha值
-    #     #利用梯度下降自动调整熵正则项
-    #     alpha_loss=torch.mean((entropy - self.target_entropy).detach() *self.log_alpha.exp())
-    #     self.log_alpha_optimizer.zero_grad()
-    #     alpha_loss.backward()
-    #     self.log_alpha_optimizer.step()
-        
-    #     #软更新目标网络
-    #     self.soft_update(self.critic_1,self.target_critic_1)
-    #     self.soft_update(self.critic_2,self.target_critic_2)
-    #     # 在 TensorBoard 中记录损失
-    #     step = len(self.losses['follower_critic_1_loss'])  # 当前步数
-    #     self.writer.add_scalar('Loss/follower_Critic1', critic_1_loss.item(), step)
-    #     self.writer.add_scalar('Loss/follower_Critic2', critic_2_loss.item(), step)
-    #     self.writer.add_scalar('Loss/follower_Actor', actor_loss.item(), step)
-    #     self.writer.add_scalar('Loss/follower_Alpha', alpha_loss.item(), step)
     def update(self, transition_dict):
         # 数据转换到张量
         states = torch.tensor(transition_dict['states'], dtype=torch.float).to(self.device)

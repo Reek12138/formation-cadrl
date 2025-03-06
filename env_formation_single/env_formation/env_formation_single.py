@@ -70,7 +70,7 @@ class CustomEnv:
         # print(self.leader_agent.pos)
         # for i in range (follower_uav_num):
         #     print(self.follower_uavs[f"follower_{i}"].pos)
-        self.SAC = SAC(state_dim = (4+2+3*5+2+5*(self.follower_uav_num-1) + 2 ),
+        self.SAC = SAC(state_dim = (4+2+4*5+2+5*(self.follower_uav_num-1) + 2 ),
                         #    state_dim = (4+4+5*self.num_obstacles+2+5*(self.follower_uav_num-1))
                                                             hidden_dim = 512,
                                                             action_dim=2,
@@ -374,7 +374,7 @@ class CustomEnv:
             obs_pos_vel_2 = []
             obs_num_follower = 0
             sorted_obs = sorted(self.obstacles.items(), key=lambda obs: np.linalg.norm(np.array([obs[1].pos_x, obs[1].pos_y]) - np.array(self.follower_uavs[f"follower_{i}"].pos)))
-            for obs_id, obs in sorted_obs[:3]:
+            for obs_id, obs in sorted_obs[:4]:
             # for obs_id, obs in self.obstacles.items():
                 obs_pos = [obs.pos_x, obs.pos_y]
                 _obs_distance, _obs_angle = CustomEnv.calculate_relative_distance_and_angle(self.follower_uavs[f"follower_{i}"].pos, obs_pos)
@@ -410,7 +410,7 @@ class CustomEnv:
                     obs_pos_vel_2.extend([px, py, _obs_distance_, obs_dis_angle / (2*np.pi), vo_flag])
                     # obs_pos_vel_2.extend([px, py, vo_flag])
             
-            for _ in range (3 - obs_num_follower):
+            for _ in range (4 - obs_num_follower):
                 # obs_pos_vel_2.extend([1, 1, 1, 0, False])
                 obs_pos_vel_2.extend([-1, -1, -1, -1, False])
             # print(f"uav{i} obs :", obs_pos_vel_2)     
@@ -470,12 +470,12 @@ class CustomEnv:
 
 
             self.follower_uavs[f"follower_{i}"].observation = np.array([
-                self_pos_2+
-                side_pos_2 + 
-                target_pos_2 +
-                obs_pos_vel_2 +
-                follower_pos_ + 
-                leader_vel 
+                self_pos_2+ #dim=2
+                side_pos_2 +  #dim=4
+                target_pos_2 + #dim=2
+                leader_vel + #dim=2
+                obs_pos_vel_2 + #dim=5*4
+                follower_pos_  #dim=2*5
                 # +leader_pos
             ])
 
@@ -826,15 +826,16 @@ class CustomEnv:
                                                                                                                                                         obs_cir_list=obs_cir_list,
                                                                                                                                                         obs_line_list=obs_line_list,
                                                                                                                                                         action=action)
-                if vo_flag and dis <= self.obs_delta:
-                    # delta = -10 * (self.obs_delta*0.5/ (min_dis + 0.1))
-                    delta = max(-900/(dis*dis), -120)
-                    x = 0
+                if dis <= self.obs_delta:
+                    if vo_flag:
+                        delta = max(-900/(dis*dis), -120)
+                        x = 0
                     # print(f"uav_{uav_id}_vo_flag")
+                    else:
+                        delta = max(-25/(dis), -40)
+                        x = -1
                 else:
-                    # delta = max(-200/(dis*dis), -40)
-                    delta = max(-25/(dis), -40)
-                    x = -1
+                    delta = 0
                     # print(f"uav_{uav_id}_none_vo_flag")
 
                 dis_ = dis - last_obs_distance[obs_id]
