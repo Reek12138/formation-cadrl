@@ -15,7 +15,7 @@ np.set_printoptions(precision=5, suppress=True)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 
-from env_formation.env_formation_single_2 import CustomEnv
+from env_formation.env_formation_single import CustomEnv
 from env_formation.circle_agent_sac import circle_agent, ReplayBuffer
 
 
@@ -43,7 +43,17 @@ current_path = os.path.dirname(os.path.realpath(__file__))
 agent_path = current_path + "/leader_model/"
 better_path = current_path + "/leader_model/better/"
 follower_path = current_path + "/follower_model"
+follower_paths = [
+    current_path + "/follower_model1",
+    current_path + "/follower_model2",
+    current_path + "/follower_model3"
+]
 follower_better_path = current_path + "/follower_model/better/"
+follower_better_paths = [
+    current_path + "/follower_model1/better/",
+    current_path + "/follower_model2/better/",
+    current_path + "/follower_model3/better/"
+]
 
 timestamp = time.strftime("%Y%m%d%H%M%S")
 
@@ -56,7 +66,10 @@ lowest_num_follower_collision = RENDER_NUM_EPISODE
 last_episode_follower_reward = -inf
 
 env.leader_agent.replay_buffer.clear()
-env.SAC.replay_buffer.clear()
+env.SAC1.replay_buffer.clear()
+env.SAC2.replay_buffer.clear()
+env.SAC3.replay_buffer.clear()
+SAC_network = [env.SAC1, env.SAC2, env.SAC3]
 env.leader_agent.sac_network.load_model(better_path, scenario)
 # env.SAC.load_model(follower_better_path, scenario)
 
@@ -138,7 +151,7 @@ for episode_i in range(NUM_EPISODE):
         follower_observations = []
         for i in range (env.follower_uav_num):
             # print(env.follower_uavs[f"follower_{i}"].observation.shape)
-            follower_action = env.SAC.take_action(env.follower_uavs[f"follower_{i}"].observation)
+            follower_action = SAC_network[i].take_action(env.follower_uavs[f"follower_{i}"].observation)
             follower_observations. extend(env.follower_uavs[f"follower_{i}"].observation)
             noisy_follower_action = follower_action + np.random.normal(0, NOISE, size=follower_action.shape)
             noisy_follower_action = np.clip(noisy_follower_action, -1, 1)
@@ -192,7 +205,7 @@ for episode_i in range(NUM_EPISODE):
             follower_R = np.array(follower_reward[i])
             follower_NS = next_follower_observations[i]
             follower_done_ = follower_done[i]
-            env.SAC.replay_buffer.add(state=follower_S, action=follower_A, reward=follower_R, next_state=follower_NS, done=follower_done_)
+            SAC_network[i].replay_buffer.add(state=follower_S, action=follower_A, reward=follower_R, next_state=follower_NS, done=follower_done_)
             # print(f"uav{i} state : {follower_S} ")
             # print(f"uav{i} action : {follower_A} ")
             # print(f"uav{i} reward : {follower_R} ")
@@ -219,13 +232,14 @@ for episode_i in range(NUM_EPISODE):
 
                 # 跟随者的网络更新
                 # if (total_step + 1) % (TARGET_UPDATE_INTERVAL*2) == 0:
-                fs, fa, fr, fns, fd = env.SAC.replay_buffer.sample(batch_size=BATCH_SIZE)
-                f_transition_dict = {'states' : fs,
-                                    'actions' : fa,
-                                    'rewards' : fr,
-                                    'next_states' : fns,
-                                    'dones' : fd}
-                env.SAC.update(transition_dict= f_transition_dict)
+                for k in range (env.follower_uav_num):
+                    fs, fa, fr, fns, fd = SAC_network[k].replay_buffer.sample(batch_size=BATCH_SIZE)
+                    f_transition_dict = {'states' : fs,
+                                        'actions' : fa,
+                                        'rewards' : fr,
+                                        'next_states' : fns,
+                                        'dones' : fd}
+                    SAC_network[k].update(transition_dict= f_transition_dict)
         
         if(total_step +1)% (TARGET_UPDATE_INTERVAL*10) == 0 and batch_flag == True and episode_i <= 20000 and episode_i > 3000:
             if env.leader_agent.replay_buffer.size() >= BATCH_SIZE:
@@ -240,13 +254,14 @@ for episode_i in range(NUM_EPISODE):
 
                 # 跟随者的网络更新
                 # if (total_step + 1) % (TARGET_UPDATE_INTERVAL*2) == 0:
-                fs, fa, fr, fns, fd = env.SAC.replay_buffer.sample(batch_size=BATCH_SIZE)
-                f_transition_dict = {'states' : fs,
-                                    'actions' : fa,
-                                    'rewards' : fr,
-                                    'next_states' : fns,
-                                    'dones' : fd}
-                env.SAC.update(transition_dict= f_transition_dict)
+                for k in range(env.follower_uav_num):
+                    fs, fa, fr, fns, fd = SAC_network[k].replay_buffer.sample(batch_size=BATCH_SIZE)
+                    f_transition_dict = {'states' : fs,
+                                        'actions' : fa,
+                                        'rewards' : fr,
+                                        'next_states' : fns,
+                                        'dones' : fd}
+                    SAC_network[k].update(transition_dict= f_transition_dict)
             
         
 # ======碰撞检测========================================================================================
@@ -304,18 +319,18 @@ for episode_i in range(NUM_EPISODE):
         if not os.path.exists(agent_path):
             os.makedirs(agent_path)
         env.leader_agent.sac_network.save_model(agent_path, scenario)
+        for k in range(env.follower_uav_num):
+            fs, fa, fr, fns, fd = SAC_network[k].replay_buffer.sample(batch_size=BATCH_SIZE)
+            f_transition_dict = {'states' : fs,
+                                'actions' : fa,
+                                'rewards' : fr,
+                                'next_states' : fns,
+                                'dones' : fd}
+            SAC_network[k].update(transition_dict= f_transition_dict)
 
-        fs, fa, fr, fns, fd = env.SAC.replay_buffer.sample(batch_size=BATCH_SIZE)
-        f_transition_dict = {'states' : fs,
-                            'actions' : fa,
-                            'rewards' : fr,
-                            'next_states' : fns,
-                            'dones' : fd}
-        env.SAC.update(transition_dict= f_transition_dict)
-
-        if not os.path.exists(follower_path):
-            os.makedirs(follower_path)
-        env.SAC.save_model(follower_path, scenario)
+            if not os.path.exists(follower_paths[k]):
+                os.makedirs(follower_paths[k])
+            SAC_network[k].save_model(follower_paths[k], scenario)
 
 
 
@@ -341,7 +356,9 @@ for episode_i in range(NUM_EPISODE):
             
 
             env.leader_agent.sac_network.load_model(agent_path, scenario)
-            env.SAC.load_model(follower_path, scenario)
+            # env.SAC.load_model(follower_path, scenario)
+            for k in range (env.follower_uav_num):
+                SAC_network[k].load_model(follower_paths[k], scenario)
             target_distance = np.linalg.norm(np.array(env.leader_agent.pos) - np.array(env.leader_target_pos))
 
             leader_state, done = env.reset()
@@ -378,7 +395,7 @@ for episode_i in range(NUM_EPISODE):
                 follower_actions = []
                 follower_observations = []
                 for i in range (env.follower_uav_num):
-                    follower_action = env.SAC.take_action(env.follower_uavs[f"follower_{i}"].observation)
+                    follower_action = SAC_network[i].take_action(env.follower_uavs[f"follower_{i}"].observation)
                     follower_observations. extend(env.follower_uavs[f"follower_{i}"].observation)
                     noisy_follower_action = follower_action + np.random.normal(0, 0.01, size=follower_action.shape)
                     noisy_follower_action = np.clip(noisy_follower_action, -1, 1)
@@ -444,16 +461,18 @@ for episode_i in range(NUM_EPISODE):
             if not os.path.exists(better_path):
                 os.makedirs(better_path)
             env.leader_agent.sac_network.save_model(better_path, scenario)
-            if not os.path.exists(follower_better_path):
-                os.makedirs(follower_better_path)
-            env.SAC.save_model(follower_better_path, scenario)
+            for k in range(env.follower_uav_num):
+                if not os.path.exists(follower_better_paths[k]):
+                    os.makedirs(follower_better_paths[k])
+                SAC_network[k].save_model(follower_better_paths[k], scenario)
             print("--------------------------领航者更好的参数-----------------")
         
         if num_follower_collision <= lowest_num_follower_collision:
             lowest_num_follower_collision = num_follower_collision
-            if not os.path.exists(follower_better_path):
-                os.makedirs(follower_better_path)
-            env.SAC.save_model(follower_better_path, scenario)
+            for k in range(env.follower_uav_num):
+                if not os.path.exists(follower_better_paths[k]):
+                    os.makedirs(follower_better_paths[k])
+                SAC_network[k].save_model(follower_better_paths[k], scenario)
             print("--------------------------跟随者更好的参数-----------------")
 
 
@@ -466,7 +485,10 @@ for episode_i in range(NUM_EPISODE):
 
         if  episode_i > 20000:
             env.leader_agent.sac_network.load_model(better_path, scenario)
-            env.SAC.load_model(follower_better_path, scenario)
+            # env.SAC.load_model(follower_better_path, scenario)
+            for k in range(env.follower_uav_num):
+                SAC_network[k].load_model(follower_better_paths[k], scenario)
         else:
             env.leader_agent.sac_network.load_model(agent_path, scenario)
-            env.SAC.load_model(follower_path, scenario)
+            for k in range(env.follower_uav_num):
+                SAC_network[k].load_model(follower_paths[k], scenario)

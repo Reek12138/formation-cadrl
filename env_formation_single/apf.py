@@ -257,8 +257,8 @@ class APFAgent_follower:
         # # print(force_run)
         # # print(force_turn)
         # a = np.clip(force_run / k_m, -0.2, 0.2)
-        #
-        #
+        
+        
         # # w_turn = np.clip(force_turn, -1, 1)
         # # a_run = np.clip(force_run, -1, 1)
         # w = np.clip(force_turn / k_w, -0.05, 0.05)

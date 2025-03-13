@@ -7,7 +7,7 @@ import torch.cuda
 import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from env_formation.env_formation_single import CustomEnv
+from env_formation.env_formation_single_2 import CustomEnv
 from env_formation.circle_agent_sac import circle_agent, ReplayBuffer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -26,9 +26,9 @@ follower_better_path = current_path + "/follower_model/better/"
 for episode_i in range(RENDER_EPISODE_NUM):
     env = CustomEnv(delta=0.1)
     # env.leader_agent.sac_network.load_model(better_path, scenario)
-    env.leader_agent.sac_network.load_model(better_path, scenario)
+    env.leader_agent.sac_network.load_model(agent_path, scenario)
     # env.SAC.load_model(follower_better_path, scenario)
-    env.SAC.load_model(follower_better_path, scenario)
+    env.SAC.load_model(follower_path, scenario)
 
     leader_state, leader_done = env.reset()
     target_distance = np.linalg.norm(np.array(env.leader_agent.pos) - np.array(env.leader_target_pos))
@@ -37,9 +37,10 @@ for episode_i in range(RENDER_EPISODE_NUM):
     for step_i in range (RENDER_NUM_STEP):
         # time.sleep(0.5)
         # print("==============================")
+        # env.render(display_time = 0.5)
         env.render(display_time = 0.01)
         leader_action = env.leader_agent.sac_network.take_action(leader_state)
-        leader_noisy_action = leader_action + np.random.normal(0, 0.05, size=leader_action.shape)
+        leader_noisy_action = leader_action + np.random.normal(0, 0.01, size=leader_action.shape)
         leader_noisy_action = np.clip(leader_noisy_action, -1, 1)
 
         leader_target_distance = np.linalg.norm(np.array(env.leader_agent.pos)- np.array(env.leader_target_pos))
@@ -65,7 +66,7 @@ for episode_i in range(RENDER_EPISODE_NUM):
             # print(env.follower_uavs[f"follower_{i}"].observation.shape)
             follower_action = env.SAC.take_action(env.follower_uavs[f"follower_{i}"].observation)
             follower_observations. extend(env.follower_uavs[f"follower_{i}"].observation)
-            noisy_follower_action = follower_action + np.random.normal(0, 0.2, size=follower_action.shape)
+            noisy_follower_action = follower_action + np.random.normal(0, 0.01, size=follower_action.shape)
             noisy_follower_action = np.clip(noisy_follower_action, -1, 1)
             follower_actions.extend(noisy_follower_action)
 
