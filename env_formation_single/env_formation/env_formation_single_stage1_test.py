@@ -549,12 +549,12 @@ class CustomEnv:
 
 
             self.follower_uavs[f"follower_{i}"].observation = np.array([
-                side_pos_2 + 
-                target_pos_2 +
-                obs_pos_vel_2 +
-                self_pos_2+
-                follower_pos_ + 
-                leader_vel 
+                side_pos_2 + #dim=4
+                target_pos_2 + #dim=2
+                self_pos_2+ #dim=2
+                leader_vel + #dim=2
+                obs_pos_vel_2 + #dim=3*5
+                follower_pos_ #dim=2*5
                 # + self_last_pos_2
                 # +leader_pos
             ])
@@ -863,7 +863,7 @@ class CustomEnv:
         if self.follower_uavs[f"follower_{uav_id}"].target == True:
             self.follower_uavs[f"follower_{uav_id}"].target = False
             self.follower_uavs[f"follower_{uav_id}"].done = False
-            return 15
+            return 11
             # return 25
         if  self.follower_uavs[f"follower_{uav_id}"].formation_done:
                 return round(-40, 5)
@@ -892,9 +892,10 @@ class CustomEnv:
         
         reward = 0
         for obs_id, obs in self.obstacles.items():
-            dis, angle = CustomEnv.calculate_relative_distance_and_angle(self.follower_uavs[f"follower_{uav_id}"].pos,
+            dis_, angle = CustomEnv.calculate_relative_distance_and_angle(self.follower_uavs[f"follower_{uav_id}"].pos,
                                                                           [obs.pos_x, obs.pos_y])
-            if dis <= self.obs_delta*1.5 :     
+            dis = dis_ - self.obs_radius - self.agent_radius
+            if dis <= self.obs_delta*1.5 - self.obs_radius - self.agent_radius:     
             # if dis <= self.obs_delta*1.0 :     
                 robot_state = [self.follower_uavs[f"follower_{uav_id}"].pos[0], self.follower_uavs[f"follower_{uav_id}"].pos[1], 
                                self.follower_uavs[f"follower_{uav_id}"].vel[0], self.follower_uavs[f"follower_{uav_id}"].vel[1],
@@ -908,15 +909,15 @@ class CustomEnv:
                                                                                                                                                         obs_cir_list=obs_cir_list,
                                                                                                                                                         obs_line_list=obs_line_list,
                                                                                                                                                         action=action)
-                if vo_flag and dis <= self.obs_delta:
+                if vo_flag and dis <= self.obs_delta - self.obs_radius - self.agent_radius:
                     # delta = -10 * (self.obs_delta*0.5/ (min_dis + 0.1))
-                    # delta = max(-900/(dis*dis), -120)
-                    delta = max(-1200/(dis*dis), -150)
+                    delta = max(-900/(dis*dis), -900)
+                    # delta = max(-1200/(dis*dis), -800)
                     x = 0
                     # print(f"uav_{uav_id}_vo_flag")
                 else:
-                    # delta = max(-25/(dis), -40)
-                    delta = max(-35/(dis), -50)
+                    delta = max(-25/(dis), -40)
+                    # delta = max(-30/(dis), -60)
                     x = -1
                     # print(f"uav_{uav_id}_none_vo_flag")
 
@@ -930,7 +931,7 @@ class CustomEnv:
                 # reward +=  round( (-1/(dis + 1)) * delta, 5)
                 # reward +=  round( (-1/(dis + 1)) * delta + leader_reward * x, 5)
                 # delta = max(-25/(dis), -20)
-                reward += round(delta, 5 )
+                reward += round(delta, 5 )*0.3
                 
                 
         
@@ -940,11 +941,12 @@ class CustomEnv:
     def _uav_collision_reward(self, uav_id):
         reward = 0
         if self.follower_uavs[f"follower_{uav_id}"].uav_done:
-            return -100
+            return -300
         for j in range (self.follower_uav_num):
             if j != uav_id:
-                dis, angle = CustomEnv.calculate_relative_distance_and_angle(self.follower_uavs[f"follower_{uav_id}"].pos,
+                dis_, angle = CustomEnv.calculate_relative_distance_and_angle(self.follower_uavs[f"follower_{uav_id}"].pos,
                                                                           self.follower_uavs[f"follower_{j}"].pos)
+                dis = dis_ - 2*self.agent_radius
                 # if dis <= self.obs_delta/2:
                 robot_state = [self.follower_uavs[f"follower_{uav_id}"].pos[0], self.follower_uavs[f"follower_{uav_id}"].pos[1], 
                             self.follower_uavs[f"follower_{uav_id}"].vel[0], self.follower_uavs[f"follower_{uav_id}"].vel[1],
@@ -961,15 +963,15 @@ class CustomEnv:
                                                                                                                                                     obs_cir_list=obs_cir_list,
                                                                                                                                                     obs_line_list=obs_line_list,
                                                                                                                                                     action=action)
-                if dis < np.linalg.norm(np.array(self.formation_pos[0])):
+                if dis < np.linalg.norm(np.array(self.formation_pos[0]))- 2*self.agent_radius:
                     # print("formation vo flag")
                     if vo_flag == True:
                         # reward += round((-6000/(dis+1)), 5)
                         # reward += round(-20, 5)
-                        reward += round(-80 / (dis), 5)  
+                        reward += round(-80 / (dis), 5)*5  
                     else:
                         # reward += round((-2000/(dis+1)), 5)
-                        reward += round(-10 / (dis), 5)
+                        reward += round(-10 / (dis), 5)*5
         return reward
 
     def _follower_side_reward(self, uav_id):
