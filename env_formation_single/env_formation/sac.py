@@ -89,24 +89,56 @@ class ReplayBuffer:
 
 
 class PolicyNetwork(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim, n_head=5, d_dim=25, self_dim=25):
+    def __init__(self, state_dim, hidden_dim, action_dim, n_head=4, d_dim=32, self_dim=64):
         super(PolicyNetwork, self).__init__()
         # self.fc1 = nn.Linear(10+d_dim, hidden_dim)
+        # self.fc1 = nn.Linear(self_dim+d_dim*5, hidden_dim)
+
         self.fc1 = nn.Linear(state_dim, hidden_dim)
 
         self.fc_mu = nn.Linear(hidden_dim, action_dim)
         self.fc_std = nn.Linear(hidden_dim, action_dim)
         self.attention = MultiHeadAttention(n_head, d_dim, d_dim // n_head, d_dim // n_head)
-        self.mlp = nn.Sequential(
-            nn.Linear(5 * 5, 100),  
+        self.mlp_obs1 = nn.Sequential(
+            nn.Linear(5 , 64),  
             nn.ReLU(),  
-            nn.Linear(100, d_dim),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_obs2 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_obs3 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_agent1 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_agent2 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
             nn.ReLU()
         )
         self.state_self_encoder = nn.Sequential(
-            nn.Linear(10, 100),  
+            nn.Linear(10, 128),  
             nn.ReLU(),  
-            nn.Linear(100, self_dim),  
+            nn.Linear(128, self_dim),  
+            nn.ReLU()
+        )
+        self.state_obs_neigh_encoder = nn.Sequential(
+            nn.Linear(5*32, 128),  
+            nn.ReLU(),  
+            nn.Linear(128, 5*5),  
             nn.ReLU()
         )
 
@@ -117,16 +149,33 @@ class PolicyNetwork(nn.Module):
 
     def forward(self, x):
         # ================ attn =======================
+        # # 拆分 x
         # state_self, state_obs_neighbor = torch.split(x, [10, 25], dim=1)
-        # state_obs_neighbor = self.mlp(state_obs_neighbor)
-        # state_obs_neighbor = state_obs_neighbor.unsqueeze(1)
-        # q, attn = self.attention(state_obs_neighbor, state_obs_neighbor, state_obs_neighbor)
-        # q_ = q.squeeze(1)
+        # state_obs, state_neighbor = torch.split(state_obs_neighbor, [15, 10], dim=1)
+
+        # # 再拆分成 3 个 5 维的 observation (obs) 和 2 个 5 维的 agent
+        # obs1, obs2, obs3 = torch.split(state_obs, [5, 5, 5], dim=1)
+        # agent1, agent2 = torch.split(state_neighbor, [5, 5], dim=1)
+
+        # # 通过 MLP 编码
+        # obs1_ = self.mlp_obs1(obs1)  # (batch_size, d_dim)
+        # obs2_ = self.mlp_obs1(obs2)
+        # obs3_ = self.mlp_obs1(obs3)
+        # agent1_ = self.mlp_agent1(agent1)
+        # agent2_ = self.mlp_agent1(agent2)
+
+        # # 拼接成序列数据
+        # state_obs_seq = torch.stack([obs1_, obs2_, obs3_, agent1_, agent2_], dim=1)  # (batch_size, seq_len=5, d_dim)
+
+        # # 输入 Multi-Head Attention
+        # q, attn = self.attention(state_obs_seq, state_obs_seq, state_obs_seq)
+
+        # q_ = q.reshape(q.shape[0], -1) 
 
         # state_self_embed = self.state_self_encoder(state_self)
         # state_combined = torch.cat([state_self_embed , q_], dim=1)
 
-        # state_combined = torch.cat([state_self , q_], dim=1)
+        # # state_combined = torch.cat([state_self , q_], dim=1)
         # ================ attn =======================
 
 
@@ -155,23 +204,48 @@ class PolicyNetwork(nn.Module):
 
 
 class QvalueNet(nn.Module):
-    def __init__(self, multi_state_dim, multi_hidden_dim, multi_action_dim, n_head=5, d_dim=25, self_dim=25):
+    def __init__(self, multi_state_dim, multi_hidden_dim, multi_action_dim, n_head=4, d_dim=32, self_dim=64):
         super(QvalueNet, self).__init__()
         # self.fc1 = nn.Linear(10 + d_dim + multi_action_dim, multi_hidden_dim)
+        # self.fc1 = nn.Linear(self_dim + d_dim*5 + multi_action_dim, multi_hidden_dim)
         self.fc1 = nn.Linear(multi_state_dim+ multi_action_dim, multi_hidden_dim)
         self.fc2 = nn.Linear(multi_hidden_dim, multi_hidden_dim)
         self.fc_out = nn.Linear(multi_hidden_dim, 1)
         self.attention = MultiHeadAttention(n_head, d_dim, d_dim // n_head, d_dim // n_head)
-        self.mlp = nn.Sequential(
-            nn.Linear(5 * 5, 100),  
+        self.mlp_obs1 = nn.Sequential(
+            nn.Linear(5 , 64),  
             nn.ReLU(),  
-            nn.Linear(100, d_dim),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_obs2 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_obs3 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_agent1 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_agent2 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
             nn.ReLU()
         )
         self.state_self_encoder = nn.Sequential(
-            nn.Linear(10, 100),  
+            nn.Linear(10, 128),  
             nn.ReLU(),  
-            nn.Linear(100, self_dim),  
+            nn.Linear(128, self_dim),  
             nn.ReLU()
         )
         # self.ma_encoder = nn.Sequential(
@@ -180,6 +254,12 @@ class QvalueNet(nn.Module):
         #     nn.Linear(100, multi_action_dim),  
         #     nn.ReLU()
         # )
+        self.state_obs_neigh_encoder = nn.Sequential(
+            nn.Linear(5*32+64, 128),  
+            nn.ReLU(),  
+            nn.Linear(128, 5*5+10),  
+            nn.ReLU()
+        )
 
 
         # 使用 He 初始化权重
@@ -191,23 +271,40 @@ class QvalueNet(nn.Module):
         # ================ attn =======================
 
         # state_self, state_obs_neighbor = torch.split(mx, [10, 25], dim=1)
-        # state_obs_neighbor = self.mlp(state_obs_neighbor)
-        # state_obs_neighbor = state_obs_neighbor.unsqueeze(1)
-        # q, attn = self.attention(state_obs_neighbor, state_obs_neighbor, state_obs_neighbor)
-        # q_ = q.squeeze(1)
-        # # state_self_embed = self.state_self_encoder(state_self)
-        # # state_combined = torch.cat([state_self_embed , q_], dim=1)
-        # state_combined = torch.cat([state_self, q_], dim=1)
+        # state_obs, state_neighbor = torch.split(state_obs_neighbor, [15, 10], dim=1)
+
+        # # 再拆分成 3 个 5 维的 observation (obs) 和 2 个 5 维的 agent
+        # obs1, obs2, obs3 = torch.split(state_obs, [5, 5, 5], dim=1)
+        # agent1, agent2 = torch.split(state_neighbor, [5, 5], dim=1)
+
+        # # 通过 MLP 编码
+        # obs1_ = self.mlp_obs1(obs1)  # (batch_size, d_dim)
+        # obs2_ = self.mlp_obs1(obs2)
+        # obs3_ = self.mlp_obs1(obs3)
+        # agent1_ = self.mlp_agent1(agent1)
+        # agent2_ = self.mlp_agent1(agent2)
+
+        # # 拼接成序列数据
+        # state_obs_seq = torch.stack([obs1_, obs2_, obs3_, agent1_, agent2_], dim=1)  # (batch_size, seq_len=5, d_dim)
+
+        # q, attn = self.attention(state_obs_seq, state_obs_seq, state_obs_seq)
+        # q_ = q.reshape(q.shape[0], -1) 
+        # state_self_embed = self.state_self_encoder(state_self)
+        # state_combined = torch.cat([state_self_embed , q_], dim=1)
+        # # state_combined = torch.cat([state_self, q_], dim=1)
         # ================ attn =======================
 
 
         # mx = state_combined.view(state_combined.size(0), -1) 
+        # mx_ = self.state_obs_neigh_encoder(mx)
+
         mx = mx.view(mx.size(0), -1) 
         ma = ma.view(ma.size(0), -1)  # 展平为 [batch_size, action_dim * agent_num]
         # print("Shape of mx:", mx.shape)
         # print("Shape of ma:", ma.shape)
 
         cat = torch.cat([mx, ma], dim=1)
+        # cat = torch.cat([mx_, ma], dim=1)
         x = F.relu(self.fc1(cat))
         x = F.relu(self.fc2(x))
         out_put = self.fc_out(x)

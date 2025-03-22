@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from math import sin, cos, tan, pi, sqrt, log
 import matplotlib.patches as patches
 import torch
-from env_formation.sac import SAC
+from env_formation.sac_attn import SAC
 
 np.set_printoptions(precision=5, suppress=True)
 class CustomEnv:

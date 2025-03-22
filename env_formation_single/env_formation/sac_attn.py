@@ -1,0 +1,536 @@
+import torch
+from torch import nn 
+from torch.nn import functional as F
+import numpy as np
+import random
+import math
+import os
+from torch.distributions import Normal
+import collections
+from torch.utils.tensorboard import SummaryWriter
+import sys
+import os
+from sample_factory.model.model_utils import fc_layer, nonlinearity
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# parent_dir = os.path.dirname(current_dir)  
+sys.path.append(current_dir)  
+
+from attention_layer import MultiHeadAttention, OneHeadAttention
+
+
+class SumTree:
+    def __init__(self, capacity):
+        self.capacity = capacity  # 树的最大容量
+        self.tree = np.zeros(2 * capacity - 1)  # 用于存储优先级的树
+        self.data = np.zeros(capacity, dtype=object)  # 用于存储经验的数组
+        self.write_index = 0  # 当前写入的位置
+        self.size = 0  # 当前存储的经验数量
+
+    def add(self, priority, data):
+        tree_index = self.write_index + self.capacity - 1
+        self.data[self.write_index] = data
+        self.update(tree_index, priority)
+        self.write_index += 1
+        if self.write_index >= self.capacity:
+            self.write_index = 0  # 循环覆盖
+        self.size = min(self.size + 1, self.capacity)
+
+    def update(self, tree_index, priority):
+        change = priority - self.tree[tree_index]
+        self.tree[tree_index] = priority
+        while tree_index != 0:  # 更新父节点
+            tree_index = (tree_index - 1) // 2
+            self.tree[tree_index] += change
+
+    def get_leaf(self, value):
+        parent_index = 0
+        while True:
+            left_child = 2 * parent_index + 1
+            right_child = left_child + 1
+            if left_child >= len(self.tree):
+                leaf_index = parent_index
+                break
+            if value <= self.tree[left_child]:
+                parent_index = left_child
+            else:
+                value -= self.tree[left_child]
+                parent_index = right_child
+        data_index = leaf_index - self.capacity + 1
+        return leaf_index, self.tree[leaf_index], self.data[data_index]
+
+    def total_priority(self):
+        return self.tree[0]  # 根节点的值是总优先级
+    
+
+class ReplayBuffer:
+    def __init__(self, capacity):
+        self.buffer = collections.deque(maxlen=capacity)
+
+    def add(self, state, action, reward, next_state, done):
+        self.buffer.append((state, action, reward, next_state, done))
+    
+    def sample(self, batch_size):
+        transations = random.sample(self.buffer, batch_size)
+        state, action, reward, next_state, done = zip(*transations)
+        return(
+            np.array(state),
+            np.array(action),
+            np.array(reward),
+            np.array(next_state),
+            np.array(done)
+        )
+    
+    def size(self):
+        return len(self.buffer)
+    
+    def clear(self):
+        self.buffer.clear()
+
+
+
+class PolicyNetwork(nn.Module):
+    def __init__(self, state_dim, hidden_dim, action_dim, n_head=1, d_dim=5, self_dim=32):
+        super(PolicyNetwork, self).__init__()
+        # self.fc1 = nn.Linear(10+d_dim, hidden_dim)
+        # self.fc1 = nn.Linear(self_dim+d_dim*5, hidden_dim)
+        # self.fc1 = nn.Linear(d_dim*3, hidden_dim)
+
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+
+        self.fc_mu = nn.Linear(hidden_dim, action_dim)
+        self.fc_std = nn.Linear(hidden_dim, action_dim)
+        self.attention = MultiHeadAttention(n_head, d_dim, d_dim // n_head, d_dim // n_head)
+        # self.attention = OneHeadAttention(n_head, d_dim, d_dim // n_head * 8, d_dim // n_head * 8)
+        # self.mlp_obs1 = nn.Sequential(
+        #     nn.Linear(5 , 64),  
+        #     nn.ReLU(),  
+        #     nn.Linear(64, d_dim),  
+        #     nn.ReLU()
+        # )
+        # self.mlp_obs2 = nn.Sequential(
+        #     nn.Linear(5 , 64),  
+        #     nn.ReLU(),  
+        #     nn.Linear(64, d_dim),  
+        #     nn.ReLU()
+        # )
+        # self.mlp_obs3 = nn.Sequential(
+        #     nn.Linear(5 , 64),  
+        #     nn.ReLU(),  
+        #     nn.Linear(64, d_dim),  
+        #     nn.ReLU()
+        # )
+        # self.mlp_agent1 = nn.Sequential(
+        #     nn.Linear(5 , 64),  
+        #     nn.ReLU(),  
+        #     nn.Linear(64, d_dim),  
+        #     nn.ReLU()
+        # )
+        # self.mlp_agent2 = nn.Sequential(
+        #     nn.Linear(5 , 64),  
+        #     nn.ReLU(),  
+        #     nn.Linear(64, d_dim),  
+        #     nn.ReLU()
+        # )
+        # self.state_self_encoder = nn.Sequential(
+        #     nn.Linear(10, 128),  
+        #     nn.ReLU(),  
+        #     nn.Linear(128, self_dim),  
+        #     nn.ReLU()
+        # )
+        # self.state_obs_neigh_encoder = nn.Sequential(
+        #     nn.Linear(5*32, 128),  
+        #     nn.ReLU(),  
+        #     nn.Linear(128, 5*5),  
+        #     nn.ReLU()
+        # )
+        # self.layer_norm = nn.LayerNorm(d_dim)
+        self.mlp_self = nn.Sequential(
+            nn.Linear(10 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+
+        self.mlp_obs = nn.Sequential(
+            nn.Linear(5*3 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+
+        self.mlp_neigh = nn.Sequential(
+            nn.Linear(5*2 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        
+
+         # 使用 Xavier 初始化权重
+        nn.init.kaiming_uniform_(self.fc1.weight, nonlinearity='relu')
+        nn.init.kaiming_uniform_(self.fc_mu.weight, nonlinearity='relu')
+        nn.init.kaiming_uniform_(self.fc_std.weight, nonlinearity='relu')
+
+        # nn.init.xavier_uniform_(self.fc1.weight)
+        # nn.init.xavier_uniform_(self.fc_mu.weight)
+        # nn.init.xavier_uniform_(self.fc_std.weight)
+
+    def forward(self, x):
+        # ================ attn =======================
+        # 拆分 x
+        state_self, state_obs_neighbor = torch.split(x, [10, 25], dim=1)
+        state_obs, state_neighbor = torch.split(state_obs_neighbor, [15, 10], dim=1)
+
+        
+
+
+        
+
+        # 再拆分成 3 个 5 维的 observation (obs) 和 2 个 5 维的 agent
+        obs1, obs2, obs3 = torch.split(state_obs, [5, 5, 5], dim=1)
+        agent1, agent2 = torch.split(state_neighbor, [5, 5], dim=1)
+
+        # # 通过 MLP 编码
+        # obs1_ = self.mlp_obs1(obs1)  # (batch_size, d_dim)
+        # obs2_ = self.mlp_obs1(obs2)
+        # obs3_ = self.mlp_obs1(obs3)
+        # agent1_ = self.mlp_agent1(agent1)
+        # agent2_ = self.mlp_agent1(agent2)
+
+        # 拼接成序列数据
+        state_obs_seq = torch.stack([obs1, obs2, obs3, agent1, agent2], dim=1)  # (batch_size, seq_len=5, d_dim)
+
+        # 输入 Multi-Head Attention
+        q, attn = self.attention(state_obs_seq , state_obs_seq  , state_obs_seq )
+
+        
+        # print("Mean of q:", q.mean().item(), " Std of q:", q.std().item())
+        # print("Mean of attn:", attn.mean().item(), " Std of attn:", attn.std().item())
+
+
+        q_ = q.view(q.shape[0], 1, -1)  # (batch_size, 1, seq_len * feature_dim)
+        q_ = q_.squeeze(1)
+        state_combined = torch.cat([state_self, q_], dim=1)
+
+        # state_combined = torch.cat([state_self , q_], dim=1)
+        # ================ attn =======================
+
+
+        x = F.relu(self.fc1(state_combined))
+        # x = F.relu(self.fc1(x))
+        mu = self.fc_mu(x)
+        # std = F.softplus(self.fc_std(x)) + 1e-6
+        std = F.softplus(self.fc_std(x))
+        dist = Normal(mu, std)
+        normal_sample = dist.rsample()
+        log_prob = dist.log_prob(normal_sample)
+        action = torch.tanh(normal_sample)
+
+        # log_prob = log_prob - torch.log(1-torch.tanh(action).pow(2) + 1e-7)
+        log_prob = log_prob - torch.log(torch.clamp(1 - torch.tanh(action).pow(2), min=1e-6))
+        log_prob = log_prob.sum(dim = -1, keepdim=True)
+
+        return action, log_prob
+    
+    
+    def save_checkpoint(self, checkpoint_file):
+        torch.save(self.state_dict(), checkpoint_file)
+
+    def load_checkpoint(self, checkpont_file):
+        self.load_state_dict(torch.load(checkpont_file))
+
+
+
+class QvalueNet(nn.Module):
+    def __init__(self, multi_state_dim, multi_hidden_dim, multi_action_dim, n_head=4, d_dim=16, self_dim=32):
+        super(QvalueNet, self).__init__()
+        # self.fc1 = nn.Linear(10 + d_dim + multi_action_dim, multi_hidden_dim)
+        # self.fc1 = nn.Linear(self_dim + d_dim*5 + multi_action_dim, multi_hidden_dim)
+        self.fc1 = nn.Linear(multi_state_dim+ multi_action_dim, multi_hidden_dim)
+        self.fc2 = nn.Linear(multi_hidden_dim, multi_hidden_dim)
+        self.fc_out = nn.Linear(multi_hidden_dim, 1)
+        self.attention = MultiHeadAttention(n_head, d_dim, d_dim // n_head*8, d_dim // n_head*8)
+        # self.attention = OneHeadAttention(n_head, d_dim, d_dim // n_head*8, d_dim // n_head*8)
+        self.mlp_obs1 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_obs2 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_obs3 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_agent1 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.mlp_agent2 = nn.Sequential(
+            nn.Linear(5 , 64),  
+            nn.ReLU(),  
+            nn.Linear(64, d_dim),  
+            nn.ReLU()
+        )
+        self.state_self_encoder = nn.Sequential(
+            nn.Linear(10, 128),  
+            nn.ReLU(),  
+            nn.Linear(128, self_dim),  
+            nn.ReLU()
+        )
+        # self.ma_encoder = nn.Sequential(
+        #     nn.Linear(multi_action_dim, 100),  
+        #     nn.ReLU(),  
+        #     nn.Linear(100, multi_action_dim),  
+        #     nn.ReLU()
+        # )
+        self.state_obs_neigh_encoder = nn.Sequential(
+            nn.Linear(5*d_dim+self_dim, 128),  
+            nn.ReLU(),  
+            nn.Linear(128, 5*5+10),  
+            nn.ReLU()
+        )
+
+
+        # 使用 He 初始化权重
+        nn.init.kaiming_uniform_(self.fc1.weight, nonlinearity='relu')
+        nn.init.kaiming_uniform_(self.fc2.weight, nonlinearity='relu')
+        nn.init.kaiming_uniform_(self.fc_out.weight)  # 输出层通常不需要特定激活函数的考虑
+    
+    def forward(self, mx, ma):
+        # ================ attn =======================
+
+        # state_self, state_obs_neighbor = torch.split(mx, [10, 25], dim=1)
+        # state_obs, state_neighbor = torch.split(state_obs_neighbor, [15, 10], dim=1)
+
+        # # 再拆分成 3 个 5 维的 observation (obs) 和 2 个 5 维的 agent
+        # obs1, obs2, obs3 = torch.split(state_obs, [5, 5, 5], dim=1)
+        # agent1, agent2 = torch.split(state_neighbor, [5, 5], dim=1)
+
+        # # 通过 MLP 编码
+        # obs1_ = self.mlp_obs1(obs1)  # (batch_size, d_dim)
+        # obs2_ = self.mlp_obs1(obs2)
+        # obs3_ = self.mlp_obs1(obs3)
+        # agent1_ = self.mlp_agent1(agent1)
+        # agent2_ = self.mlp_agent1(agent2)
+
+        # # 拼接成序列数据
+        # state_obs_seq = torch.stack([obs1_, obs2_, obs3_, agent1_, agent2_], dim=1)  # (batch_size, seq_len=5, d_dim)
+
+        # q, attn = self.attention(state_obs_seq, state_obs_seq, state_obs_seq)
+        # q_ = q.reshape(q.shape[0], -1) 
+        # state_self_embed = self.state_self_encoder(state_self)
+        # state_combined = torch.cat([state_self_embed , q_], dim=1)
+        # # state_combined = torch.cat([state_self, q_], dim=1)
+        # ================ attn =======================
+
+
+        # mx = state_combined.view(state_combined.size(0), -1) 
+        # mx_ = self.state_obs_neigh_encoder(mx)
+
+        mx = mx.view(mx.size(0), -1) 
+        ma = ma.view(ma.size(0), -1)  # 展平为 [batch_size, action_dim * agent_num]
+        # print("Shape of mx:", mx.shape)
+        # print("Shape of ma:", ma.shape)
+
+        cat = torch.cat([mx, ma], dim=1)
+        # cat = torch.cat([mx_, ma], dim=1)
+        x = F.relu(self.fc1(cat))
+        x = F.relu(self.fc2(x))
+        out_put = self.fc_out(x)
+
+        return out_put
+    
+    def save_checkpoint(self, checkpoint_file):
+        torch.save(self.state_dict(), checkpoint_file)
+
+    def load_checkpoint(self, checkpoint_file):
+        self.load_state_dict(torch.load(checkpoint_file))
+
+
+
+
+class SAC:
+    def __init__(self, state_dim, hidden_dim, action_dim, actor_lr, critic_lr, alpha_lr, 
+                 target_entropy, tau, gamma, device, agent_num):
+        self.actor = PolicyNetwork(state_dim, hidden_dim, action_dim).to(device)
+        self.critic_1 = QvalueNet(state_dim, hidden_dim, action_dim).to(device)    
+        self.critic_2 = QvalueNet(state_dim, hidden_dim, action_dim).to(device)    
+        self.target_critic_1 = QvalueNet(state_dim, hidden_dim, action_dim).to(device)    
+        self.target_critic_2 = QvalueNet(state_dim, hidden_dim, action_dim).to(device)    
+        self.target_critic_1.load_state_dict(self.critic_1.state_dict())
+        self.target_critic_2.load_state_dict(self.critic_2.state_dict())
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
+        # self.critic_1_optimizer = torch.optim.Adam(self.critic_1.parameters(), lr=critic_lr)
+        self.critic_1_optimizer = torch.optim.AdamW(self.critic_1.parameters(), lr=critic_lr, weight_decay=1e-5)
+
+        # self.critic_2_optimizer = torch.optim.Adam(self.critic_2.parameters(), lr=critic_lr)
+        self.critic_2_optimizer = torch.optim.AdamW(self.critic_2.parameters(), lr=critic_lr, weight_decay=1e-5)
+        
+        # self.log_alpha = torch.tensor(np.log(0.01), dtype=torch.float)
+        # self.log_alpha.requires_grad=True
+        self.log_alpha = torch.tensor(np.log(0.1), dtype=torch.float, requires_grad=True, device=device)
+        self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=alpha_lr)
+
+        self.target_entropy  =target_entropy
+        self.gamma = gamma
+        self.tau = tau
+        self.device = device
+        self.state_dim = state_dim
+        self.uav_num = agent_num
+        self.replay_buffer = ReplayBuffer(capacity=100000)
+        self.training_step = 0
+        self.actor_update_interval = 2
+
+        # 在类的初始化函数中初始化 TensorBoard
+        self.writer = SummaryWriter(log_dir="./sac_logs")
+        # 初始化损失记录字典
+        self.losses = {
+            'follower_critic_1_loss': [],
+            'follower_critic_2_loss': [],
+            'follower_actor_loss': [],
+            'follower_alpha_loss': []
+        }
+   
+    
+    def calc_target(self,rewards,next_states,dones):  #计算目标Q值
+        next_actions,log_prob=self.actor(next_states)
+        #计算熵，注意这里是有个负号的
+        entropy=-log_prob
+        q1_value=self.target_critic_1(next_states,next_actions)
+        q2_value=self.target_critic_2(next_states,next_actions)
+        #注意entropy自带负号
+        next_value=torch.min(q1_value,q2_value) + self.log_alpha.exp() * entropy
+         # 打印调试信息
+        # print(f"q1_value shape: {q1_value.shape}, q2_value shape: {q2_value.shape}")
+    
+        # print(f"min_next_q_values shape: {next_value.shape}")
+    
+        td_target=rewards + self.gamma * next_value *(1-dones)
+        # 打印调试信息
+        # print(f"td_target shape: {td_target.shape}")
+        return td_target
+    
+    def take_action(self, state):
+        state=torch.tensor(np.array(state),dtype=torch.float).to(self.device)
+        action=self.actor(state)[0]
+        action = action.cpu().detach().numpy().flatten()
+        return action
+
+    def soft_update(self, net, target_net):
+        for param_target, param in zip(target_net.parameters(), net.parameters()):
+            param_target.data.copy_(param_target.data * (1.0 - self.tau) + param.data * self.tau)
+
+    
+    def update(self, transition_dict):
+        # 数据转换到张量
+        states = torch.tensor(transition_dict['states'], dtype=torch.float).to(self.device)
+        actions = torch.tensor(transition_dict['actions'], dtype=torch.float).to(self.device)
+        rewards = torch.tensor(transition_dict['rewards'], dtype=torch.float).view(-1, 1).to(self.device)
+        next_states = torch.tensor(transition_dict['next_states'], dtype=torch.float).to(self.device)
+        dones = torch.tensor(transition_dict['dones'], dtype=torch.float).view(-1, 1).to(self.device)
+
+        # Critic 更新
+        self.update_critics(states, actions, rewards, next_states, dones)
+
+        # Actor 和 Alpha 每隔一定步数更新一次
+        if self.training_step % self.actor_update_interval == 0:
+            self.update_actor(states)
+            # self.update_alpha(states)
+            new_actions, log_prob = self.actor(states)  # 重新计算 log_prob
+            self.update_alpha(-log_prob)
+
+        # 软更新目标网络
+        self.soft_update(self.critic_1, self.target_critic_1)
+        self.soft_update(self.critic_2, self.target_critic_2)
+
+        # 记录步数
+        self.training_step += 1
+
+    def update_critics(self, states, actions, rewards, next_states, dones):
+        """更新 Critic 网络"""
+        td_target = self.calc_target(rewards, next_states, dones)
+        # critic_1_loss = F.mse_loss(self.critic_1(states, actions), td_target.detach())
+        critic_1_loss = F.mse_loss(self.critic_1(states, actions), td_target.detach())
+        # critic_2_loss = F.mse_loss(self.critic_2(states, actions), td_target.detach())
+        critic_2_loss = F.mse_loss(self.critic_2(states, actions), td_target.detach())
+
+        # 优化 Critic 网络
+        self.critic_1_optimizer.zero_grad()
+        critic_1_loss.backward()
+        self.critic_1_optimizer.step()
+
+        self.critic_2_optimizer.zero_grad()
+        critic_2_loss.backward()
+        self.critic_2_optimizer.step()
+
+        # 在 TensorBoard 中记录 Critic 损失
+        step = self.training_step
+        self.writer.add_scalar('Loss/Critic1', critic_1_loss.item(), step)
+        self.writer.add_scalar('Loss/Critic2', critic_2_loss.item(), step)
+
+    def update_actor(self, states):
+        """更新 Actor 网络"""
+        new_actions, log_prob = self.actor(states)
+        entropy = -log_prob
+
+        q1_value = self.critic_1(states, new_actions)
+        q2_value = self.critic_2(states, new_actions)
+
+        # 计算 Actor 损失
+        actor_loss = torch.mean(-self.log_alpha.exp() * entropy - torch.min(q1_value, q2_value))
+
+        # 优化 Actor 网络
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
+
+        # 在 TensorBoard 中记录 Actor 损失
+        # step = self.training_step
+        step = self.training_step // self.actor_update_interval
+        self.writer.add_scalar('Loss/Actor', actor_loss.item(), step)
+
+    def update_alpha(self, entropy):
+        """更新 Alpha 值"""
+        alpha_loss = torch.mean((entropy - self.target_entropy).detach() * self.log_alpha.exp())
+
+        # 优化 Alpha
+        self.log_alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.log_alpha_optimizer.step()
+
+        # 在 TensorBoard 中记录 Alpha 损失
+        # step = self.training_step
+        step = self.training_step // self.actor_update_interval
+        self.writer.add_scalar('Loss/Alpha', alpha_loss.item(), step)
+
+        
+
+    def save_model(self, base_path, scenario):
+        self.actor.save_checkpoint(os.path.join(base_path, f"uav_actor_{scenario}.pth"))
+        self.critic_1.save_checkpoint(os.path.join(base_path, f"uav_critic_1_{scenario}.pth"))
+        self.critic_2.save_checkpoint(os.path.join(base_path, f"uav_critic_2_{scenario}.pth"))
+        self.target_critic_1.save_checkpoint(os.path.join(base_path, f"uav_target_critic_1_{scenario}.pth"))
+        self.target_critic_2.save_checkpoint(os.path.join(base_path, f"uav_target_critic_2_{scenario}.pth"))
+        torch.save(self.log_alpha, os.path.join(base_path, f"log_alpha_{scenario}.pth"))
+
+    def load_model(self, base_path, scenario):
+        # print("Loading model from:", os.path.join(base_path, f"uav_target_critic_1_{scenario}.pth"))
+
+        self.actor.load_checkpoint(os.path.join(base_path, f"uav_actor_{scenario}.pth"))
+        self.critic_1.load_checkpoint(os.path.join(base_path, f"uav_critic_1_{scenario}.pth"))
+        self.critic_2.load_checkpoint(os.path.join(base_path, f"uav_critic_2_{scenario}.pth"))
+        self.target_critic_1.load_checkpoint(os.path.join(base_path, f"uav_target_critic_1_{scenario}.pth"))
+        self.target_critic_2.load_checkpoint(os.path.join(base_path, f"uav_target_critic_2_{scenario}.pth"))
+        self.log_alpha = torch.load(os.path.join(base_path, f"log_alpha_{scenario}.pth")).to(self.device)
+        self.log_alpha.requires_grad = True  # 确保重新加载后继续优化

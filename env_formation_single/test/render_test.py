@@ -7,7 +7,7 @@ import torch.cuda
 import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from env_formation.env_formation_single_stage1 import CustomEnv
+from env_formation.env_formation_single_stage2_test import CustomEnv
 from env_formation.circle_agent_sac import circle_agent, ReplayBuffer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
