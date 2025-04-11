@@ -514,7 +514,7 @@ class CustomEnv:
                 if j != i :
                     # if np.linalg.norm(np.array(self.follower_uavs[f"follower_{i}"].pos) - np.array(self.follower_uavs[f"follower_{j}"].pos)) <= np.linalg.norm(np.array(self.formation_pos[0])):
                     follower_dis, follower_angle = CustomEnv.calculate_relative_distance_and_angle(self.follower_uavs[f"follower_{i}"].pos, \
-                                                                                                self.follower_uavs[f"follower_{i}"].pos)
+                                                                                                self.follower_uavs[f"follower_{j}"].pos)
                     robot_state = [self.follower_uavs[f"follower_{i}"].pos[0], self.follower_uavs[f"follower_{i}"].pos[1], \
                                 self.follower_uavs[f"follower_{i}"].vel[0], self.follower_uavs[f"follower_{i}"].vel[1],
                                 self.agent_radius]

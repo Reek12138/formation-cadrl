@@ -7,7 +7,7 @@ import torch.cuda
 import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from env_formation.env_formation_single_stage2_test import CustomEnv
+from env_formation.env_formation_single_stage2_test_render import CustomEnv
 from env_formation.circle_agent_sac import circle_agent, ReplayBuffer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -37,7 +37,6 @@ for episode_i in range(RENDER_EPISODE_NUM):
     for step_i in range (RENDER_NUM_STEP):
         # time.sleep(0.5)
         # print("==============================")
-        env.render(display_time = 0.5)
         # env.render(display_time = 0.01)
         leader_action = env.leader_agent.sac_network.take_action(leader_state)
         leader_noisy_action = leader_action + np.random.normal(0, 0.01, size=leader_action.shape)
@@ -91,6 +90,7 @@ for episode_i in range(RENDER_EPISODE_NUM):
             # print(f"uav{i} next_state : {follower_NS} ")
             # print(f"uav{i} done : {follower_done_} ")
             # print("=============================")
+        env.render(display_time = 0.01)
 
 
         if env.leader_agent.done and not env.leader_agent.target:

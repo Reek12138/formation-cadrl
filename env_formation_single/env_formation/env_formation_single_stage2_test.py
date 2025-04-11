@@ -514,7 +514,7 @@ class CustomEnv:
                 if j != i :
                     # if np.linalg.norm(np.array(self.follower_uavs[f"follower_{i}"].pos) - np.array(self.follower_uavs[f"follower_{j}"].pos)) <= np.linalg.norm(np.array(self.formation_pos[0])):
                     follower_dis, follower_angle = CustomEnv.calculate_relative_distance_and_angle(self.follower_uavs[f"follower_{i}"].pos, \
-                                                                                                self.follower_uavs[f"follower_{i}"].pos)
+                                                                                                self.follower_uavs[f"follower_{j}"].pos)
                     robot_state = [self.follower_uavs[f"follower_{i}"].pos[0], self.follower_uavs[f"follower_{i}"].pos[1], \
                                 self.follower_uavs[f"follower_{i}"].vel[0], self.follower_uavs[f"follower_{i}"].vel[1],
                                 self.agent_radius]
@@ -637,7 +637,7 @@ class CustomEnv:
 
     def _apply_leader_action(self, action):
         """假设输入的动作是[线速度 m/s, 转向角 弧度]"""
-        linear_vel = action[0] + 1  # 线速度，带偏置
+        linear_vel = (action[0] + 1) # 线速度，带偏置
         steer_angle = action[1]  # 转向角
 
         # 单轨模型的参数

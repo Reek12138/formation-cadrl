@@ -1,7 +1,7 @@
 import random
 import heapq
 import math
-from math import atan2
+from math import atan2, sin, cos, tan
 
 import numpy as np
 import time
@@ -102,23 +102,53 @@ class APFAgent_leader:
         dt = self.display_time  # 时间步长
         force = np.linalg.norm(np.array([force_x, force_y])) #合力大小
         angle = np.arctan2(force_y, force_x) - self.orientation # 合力方向与原方向之差
-        force_turn = force * math.sin(angle)  # 向心力
-        force_run = force * math.cos(angle) # 牵引力
-        print("run",force_run)
-        print("turn",force_turn)
-        a = np.clip(force_run/k_m,-0.2,0.2)
-        w = np.clip(force_turn/k_w,-0.5,0.5)  # 正向转向
 
-        self.orientation = self.orientation + np.linalg.norm(self.v)/L * w *np.pi/2* dt
-        self.orientation = self.orientation % (2*np.pi)
-        last_v = np.linalg.norm(self.v)
-        v = np.clip(last_v + a * dt,0,2) # 速度变化
-         # 限制在一定范围
-        self.v = np.array([v * math.cos(self.orientation), v * math.sin(self.orientation)])
-        self.pos = self.pos + np.array(self.v) * dt
+        # print(force, angle)
+
+        linear_vel = (force/80)*2
+        steer_vel = (angle / np.pi)*10
+
+        # print(linear_vel, steer_vel)
+        new_orientation = self.orientation + (linear_vel / L) * math.tan(steer_vel) * dt
+        new_orientation = new_orientation % (2 * np.pi)
+        # print(new_orientation)
+
+        dx = linear_vel * dt * cos(new_orientation)
+        dy = linear_vel * dt * sin(new_orientation)
+
+        print(dx, dy)
+
+        self.pos[0] = self.pos[0] + dx
+        self.pos[1] = self.pos[1] + dy
+
+        print(self.pos)
+        self.v = np.array([linear_vel * math.cos(self.orientation), linear_vel * math.sin(self.orientation)])
+        self.leader.orientation=self.orientation
         self.leader.set_position(self.pos[0],self.pos[1])
         self.leader.set_vel(self.v)
-        self.leader.orientation=self.orientation
+
+
+        # ========================================================
+        # force_turn = force * math.sin(angle)  # 向心力
+        # force_run = force * math.cos(angle) # 牵引力
+        # # print("run",force_run)
+        # # print("turn",force_turn)
+        # a = np.clip(force_run/k_m,-0.2,0.2)
+        # w = np.clip(force_turn/k_w,-0.5,0.5)  # 正向转向
+
+        # self.orientation = self.orientation + np.linalg.norm(self.v)/L * w *np.pi/2* dt
+        # self.orientation = self.orientation % (2*np.pi)
+        # last_v = np.linalg.norm(self.v)
+        # v = np.clip(last_v + a * dt,0,2) # 速度变化
+        #  # 限制在一定范围
+        # self.v = np.array([v * math.cos(self.orientation), v * math.sin(self.orientation)])
+        # self.pos = self.pos + np.array(self.v) * dt
+        # self.leader.set_position(self.pos[0],self.pos[1])
+        # # self.leader.set_position(10, 5)
+        # self.leader.set_vel(self.v)
+        # self.leader.orientation=self.orientation
+        # ========================================================
+
         return self.pos, self.v
 
 
